@@ -1,0 +1,7 @@
+"main.obj",
+"public.obj",
+"lcd.obj",
+"temp.obj",
+"i2c.obj" 
+TO "project" 
+RAMSIZE(256) 

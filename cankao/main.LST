@@ -1,0 +1,310 @@
+C51 COMPILER V9.00   MAIN                                                                  03/29/2022 19:59:10 PAGE 1   
+
+
+C51 COMPILER V9.00, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE main.c BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          /*
+   2          实验说明：
+   3                  根据自己使用的LCD1602是否带有转接板，如果带有转接板的即为4位，需在LCD.H头文件中
+   4                  将宏#define LCD1602_4PINS打开，我们这里使用的LCD1602是8位，所以默认将该宏注释。
+   5          实验接线：
+   6                  1，LCD1602液晶模块-->单片机管脚
+   7                  参考LCD1602液晶显示实验接线（开发攻略内在对应的实验章节内实验现象有接线说明）
+   8                  2，独立按键模块-->单片机管脚 
+   9                  K1-->P34
+  10                  K2-->P35
+  11                  K3-->P32
+  12                  3，蜂鸣器模块-->单片机管脚
+  13                  BEEP-->P15
+  14                  4，LED模块-->单片机管脚
+  15                  D1-->P24
+  16                  5，LED模块-->单片机管脚
+  17                  D1-->P24
+  18                  6，继电器模块-->单片机管脚
+  19                  RELAY-->P14
+  20                  7，直流电机模块-->单片机管脚
+  21                  IN1-->P10（参考直流电机实验接线）
+  22                  8，EEPROM模块-->单片机管脚
+  23                  参考EEPROM实验接线
+  24                  9，DS18B20模块-->单片机管脚
+  25                  参考DS18B20温度传感器实验接线
+  26                  
+  27          实验现象：
+  28                  首先它能显示环境的温度并能设置上下限阀值，这是最基本的功能，系统上电的时候显示的是当前环境温度
+  29                  和设定的温度阀值，我们可以通过按键来修改温度上下限阀值。我们看，按下这个K1键会进入温度阀值设置
+  30                  界面，每按一下，切换一次阀值设置（上下阀值）界面，按第3次时，会自动回到主界面，如此循环。
+  31                  在进入温度阀值设计界面时，可以通过K2、K3键对阀值进行加减，这里我们只对温度整数部分进行设置，
+  32                  小数部分我们就不需要了，将设置好的上下限阀值保存到AT24C02（EEPROM）内，当下一次开启系统时只需
+  33                  从AT24C02内读取保存的阀值数据，而不需要重复设置上下限阀值。这样的话，我们用3个按键就实现了温度上下
+  34                  限阀值的设定，这是温度检测控制系统基本的功能。假如我们把温度上限设置为32°C，下限设置为30°C。
+  35                  另外还有恒定温度的功能。当设定好上下限阀值时，系统即会把当前的温度与设定的上下限阀值对比，
+  36                  如果高于上限温度，开启散热进行降温，同时报警；如果低于下限温度，开启加热，同时报警；
+  37                  如果当前温度处于下限和上限温度之间时，关闭散热、加热及报警。从而可将温度控制在阀值的范围内。
+  38          */
+  39          
+  40          #include "public.h"
+  41          #include "lcd.h"
+  42          #include "temp.h"
+  43          #include "i2c.h"
+  44          
+  45          
+  46          sbit k3=P3^2;   //设置温度上下限   
+  47          sbit k1=P3^4;   //加                       
+  48          sbit k2=P3^5;   //减                      
+  49          
+  50          sbit led=P2^4; //报警指示灯
+  51          
+  52          sbit beep=P1^5;   //蜂鸣器报警
+  53          sbit relay=P1^4;  //加热设备
+  54          sbit moto=P1^0;   //电机散热
+  55          
+C51 COMPILER V9.00   MAIN                                                                  03/29/2022 19:59:10 PAGE 2   
+
+  56          
+  57          char set_templ=22,set_temph=40;  //设定温度上下限默认值
+  58          u16 temp_val;  //检测的实际温度
+  59          u8 mode;  //温度模式
+  60          
+  61          void Temp_DataPros()
+  62          {
+  63   1              short temp;
+  64   1              u8 temp_buf[5];
+  65   1              temp=Ds18b20ReadTemp();
+  66   1              temp_val=temp;  
+  67   1              if(temp<0)
+  68   1              {
+  69   2                      temp=-temp;
+  70   2                      LCD_Dispstring(2+5,0,"-");
+  71   2              }
+  72   1              else
+  73   1              {
+  74   2                      LCD_Dispstring(2+5,0," ");
+  75   2              }
+  76   1      
+  77   1              temp_buf[0]=temp/100+0x30;
+  78   1              temp_buf[1]=temp%100/10+0x30;
+  79   1              temp_buf[2]='.';
+  80   1              temp_buf[3]=temp%100%10+0x30;
+  81   1              temp_buf[4]='\0';
+  82   1              LCD_Dispstring(2+6,0,temp_buf);          //显示检测的温度xx.x
+  83   1      
+  84   1              temp_buf[0]=set_temph/10+0x30;
+  85   1              temp_buf[1]=set_temph%10+0x30;
+  86   1              temp_buf[2]='\0';
+  87   1              LCD_Dispstring(5,1,temp_buf);     //显示设定的温度上限值xx
+  88   1      
+  89   1              temp_buf[0]=set_templ/10+0x30;
+  90   1              temp_buf[1]=set_templ%10+0x30;
+  91   1              temp_buf[2]='\0';
+  92   1              LCD_Dispstring(14,1,temp_buf);   //显示设定的温度下限值xx
+  93   1      }
+  94          
+  95          
+  96          
+  97          #define  K1_MODE  1
+  98          #define  K2_ADD  2
+  99          #define  K3_DEC  3
+ 100          
+ 101          //mode:  0-单次扫描   1-连续扫描
+ 102          u8 KEY_Scan(u8 mode)
+ 103          {
+ 104   1              static u8 key=1;
+ 105   1              if(key&&(k1==0||k2==0||k3==0))
+ 106   1              {
+ 107   2                      delay(1000);   //消抖
+ 108   2                      key=0;
+ 109   2                      if(k3==0)
+ 110   2                      {
+ 111   3                              return K1_MODE;
+ 112   3                      }
+ 113   2                      else if(k1==0)
+ 114   2                      {
+ 115   3                              return K2_ADD;
+ 116   3                      }
+ 117   2                      else if(k2==0)
+C51 COMPILER V9.00   MAIN                                                                  03/29/2022 19:59:10 PAGE 3   
+
+ 118   2                      {
+ 119   3                              return K3_DEC;  
+ 120   3                      }
+ 121   2              }
+ 122   1              else if(k1==1&&k2==1&&k3==1)
+ 123   1              {
+ 124   2                      key=1;  
+ 125   2              }
+ 126   1              if(mode)
+ 127   1              {
+ 128   2                      key=1;
+ 129   2              }
+ 130   1              return 0;       
+ 131   1      }
+ 132          
+ 133          void KEY_Pros()
+ 134          {
+ 135   1              u8 key;
+ 136   1              u8 temph_buf[3];
+ 137   1      
+ 138   1              key=KEY_Scan(0);
+ 139   1              
+ 140   1              if(key==K1_MODE)   //模式选择
+ 141   1              {
+ 142   2                      mode++;
+ 143   2                      LCD_Clear();
+ 144   2      
+ 145   2                      if(mode==1)
+ 146   2                      {
+ 147   3                              LCD_Dispstring(0,0,"SETH:   C");                
+ 148   3                      }
+ 149   2                      else if(mode==2)
+ 150   2                      {
+ 151   3                              LCD_Dispstring(0,1,"SETL:   C");        
+ 152   3                      }
+ 153   2                      else 
+ 154   2                      {
+ 155   3                              mode=0;
+ 156   3                              LCD_Dispstring(2,0,"Temp:     C");
+ 157   3                              LCD_Dispstring(0,1,"SETH:  ");
+ 158   3                              LCD_Dispstring(9,1,"SETL:  ");  
+ 159   3                      }
+ 160   2              }
+ 161   1              if(mode==1)      //温度上限设置
+ 162   1              {
+ 163   2                      switch(key)     
+ 164   2                      {
+ 165   3                              case K2_ADD:       //加
+ 166   3                                                      set_temph++;
+ 167   3                                                      if(set_temph>=80)set_temph=80;
+ 168   3                                                      break;
+ 169   3                              case K3_DEC:     //减
+ 170   3                                                      set_temph--;
+ 171   3                                                      if(set_temph<=0)set_temph=0;
+ 172   3                                                      break;
+ 173   3                      }
+ 174   2      
+ 175   2                      temph_buf[0]=set_temph/10+0x30;
+ 176   2                      temph_buf[1]=set_temph%10+0x30;
+ 177   2                      temph_buf[2]='\0';
+ 178   2                      LCD_Dispstring(6,0,temph_buf);
+ 179   2                      At24c02Write(0,set_temph);
+C51 COMPILER V9.00   MAIN                                                                  03/29/2022 19:59:10 PAGE 4   
+
+ 180   2              }
+ 181   1      
+ 182   1              else if(mode==2)  //温度下限设置
+ 183   1              {
+ 184   2                      switch(key)     
+ 185   2                      {
+ 186   3                              case K2_ADD:       //加
+ 187   3                                                      set_templ++;
+ 188   3                                                      if(set_templ>=80)set_templ=80;
+ 189   3                                                      break;
+ 190   3                              case K3_DEC:     //减
+ 191   3                                                      set_templ--;
+ 192   3                                                      if(set_templ<=0)set_templ=0;
+ 193   3                                                      break;
+ 194   3                      }
+ 195   2      
+ 196   2                      temph_buf[0]=set_templ/10+0x30;
+ 197   2                      temph_buf[1]=set_templ%10+0x30;
+ 198   2                      temph_buf[2]='\0';
+ 199   2                      LCD_Dispstring(6,1,temph_buf);
+ 200   2                      At24c02Write(2,set_templ);
+ 201   2              }
+ 202   1              
+ 203   1      
+ 204   1      
+ 205   1      }
+ 206          
+ 207          
+ 208          
+ 209          void sound()
+ 210          {
+ 211   1              u8 i=50;
+ 212   1              while(i--)
+ 213   1              {
+ 214   2                      beep=!beep;
+ 215   2                      delay(10);
+ 216   2              }
+ 217   1      }
+ 218          void TempData_Compare()
+ 219          {
+ 220   1              if(temp_val>set_temph*10)       //实际温度高于上限值   报警  散热
+ 221   1              {
+ 222   2                      led=1;
+ 223   2                      moto=1;
+ 224   2                      relay=1;
+ 225   2                      sound();                
+ 226   2              }
+ 227   1              else if(temp_val<set_templ*10)   //实际温度低于下限值   报警  加热
+ 228   1              {
+ 229   2                      led=1;
+ 230   2                      moto=0;
+ 231   2                      relay=0;
+ 232   2                      sound();                
+ 233   2              }
+ 234   1              else                  //实际温度在下限值和上限值之间   取消报警  取消加热  取消散热
+ 235   1              {
+ 236   2                      moto=0;
+ 237   2                      led=0;
+ 238   2                      relay=1;
+ 239   2              }
+ 240   1      }
+ 241          
+C51 COMPILER V9.00   MAIN                                                                  03/29/2022 19:59:10 PAGE 5   
+
+ 242          void kai_display()
+ 243          {
+ 244   1              if(At24c02Read(255)!=18)
+ 245   1              {
+ 246   2                      At24c02Write(0,set_temph);
+ 247   2                      At24c02Write(2,set_templ);
+ 248   2                      At24c02Write(255,18);   
+ 249   2              }
+ 250   1              else
+ 251   1              {
+ 252   2                      set_temph=At24c02Read(0);
+ 253   2                      set_templ=At24c02Read(2);       
+ 254   2              }
+ 255   1      
+ 256   1              LCD_Dispstring(2,0,"Temp:     C");
+ 257   1              LCD_Dispstring(0,1,"SETH:  ");
+ 258   1              LCD_Dispstring(9,1,"SETL:  ");
+ 259   1      }
+ 260          
+ 261          void main()
+ 262          {
+ 263   1              moto=0;
+ 264   1              led=0;
+ 265   1              relay=1;
+ 266   1      
+ 267   1              LCD_Init();
+*** WARNING C206 IN LINE 267 OF MAIN.C: 'LCD_Init': missing function-prototype
+ 268   1              kai_display();
+ 269   1              while(1)
+ 270   1              {
+ 271   2                      if(mode==0)
+ 272   2                              Temp_DataPros();
+ 273   2                      KEY_Pros();     
+ 274   2                      TempData_Compare();                             
+ 275   2              }
+ 276   1      }
+ 277          
+ 278          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    766    ----
+   CONSTANT SIZE    =     52    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      6      13
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  1 WARNING(S),  0 ERROR(S)
